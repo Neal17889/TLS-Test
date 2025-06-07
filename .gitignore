@@ -1,0 +1,4 @@
+# Visual Studio 临时文件和目录
+.vs/
+*/[Bb]in/
+*/[Oo]bj/
