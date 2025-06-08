@@ -7,31 +7,24 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
-public class MySslStream : Stream
+public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, RemoteCertificateValidationCallback certValidationCallback) : Stream
 {
-    private readonly NetworkStream _innerStream;
-    private readonly bool _leaveInnerStreamOpen;
-    private readonly RemoteCertificateValidationCallback _certValidationCallback;
+    private readonly NetworkStream _innerStream = innerStream ?? throw new ArgumentNullException(nameof(innerStream));
+    private readonly bool _leaveInnerStreamOpen = leaveInnerStreamOpen;
+    private readonly RemoteCertificateValidationCallback _certValidationCallback = certValidationCallback ?? throw new ArgumentNullException(nameof(certValidationCallback));
 
     private Aes? _aes;
     private ICryptoTransform? _encryptor;
     private ICryptoTransform? _decryptor;
-    private readonly List<byte[]> _handshakeMessages = new();
+    private readonly List<byte[]> _handshakeMessages = [];
 
     public X509Certificate? LocalCertificate { get; private set; }
     public X509Certificate? RemoteCertificate { get; private set; }
 
-    public MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, RemoteCertificateValidationCallback certValidationCallback)
-    {
-        _innerStream = innerStream ?? throw new ArgumentNullException(nameof(innerStream));
-        _leaveInnerStreamOpen = leaveInnerStreamOpen;
-        _certValidationCallback = certValidationCallback ?? throw new ArgumentNullException(nameof(certValidationCallback));
-    }
-
     public void AuthenticateAsClient(X509Certificate2 clientCert, X509Certificate2 caCert)
     {
-        if (clientCert == null) throw new ArgumentNullException(nameof(clientCert));
-        if (caCert == null) throw new ArgumentNullException(nameof(caCert));
+        ArgumentNullException.ThrowIfNull(clientCert);
+        ArgumentNullException.ThrowIfNull(caCert);
 
         using var ecdhe = new EcdheUtil();
         byte[] clientRandom = RandomNumberGenerator.GetBytes(32);
@@ -72,8 +65,8 @@ public class MySslStream : Stream
 
     public void AuthenticateAsServer(X509Certificate2 serverCert, X509Certificate2 caCert)
     {
-        if (serverCert == null) throw new ArgumentNullException(nameof(serverCert));
-        if (caCert == null) throw new ArgumentNullException(nameof(caCert));
+        ArgumentNullException.ThrowIfNull(serverCert);
+        ArgumentNullException.ThrowIfNull(caCert);
 
         using var ecdhe = new EcdheUtil();
         byte[] serverRandom = RandomNumberGenerator.GetBytes(32);
