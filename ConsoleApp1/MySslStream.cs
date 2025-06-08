@@ -6,6 +6,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 
 public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, RemoteCertificateValidationCallback certValidationCallback) : Stream
 {
@@ -140,6 +141,68 @@ public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, R
         return toCopy;
     }
 
+    public override IAsyncResult BeginRead(byte[] buffer, int offset, int count, AsyncCallback? callback, object? state)
+    {
+        return _innerStream.BeginRead(buffer, offset, count, ar =>
+        {
+            try
+            {
+                int bytesRead = _innerStream.EndRead(ar);
+                byte[] encrypted = new byte[bytesRead];
+                Buffer.BlockCopy(buffer, offset, encrypted, 0, bytesRead);
+                byte[] plain = CryptoUtil.DecryptAes(_aes!.Key, encrypted);
+                Buffer.BlockCopy(plain, 0, buffer, offset, Math.Min(plain.Length, count));
+            }
+            catch { }
+            callback?.Invoke(ar);
+        }, state);
+    }
+
+    public override int EndRead(IAsyncResult asyncResult)
+    {
+        return _innerStream.EndRead(asyncResult); // Return raw bytes read; app may have to recheck
+    }
+
+    public override IAsyncResult BeginWrite(byte[] buffer, int offset, int count, AsyncCallback? callback, object? state)
+    {
+        if (_aes == null || _encryptor == null)
+            throw new InvalidOperationException("Stream not initialized for encryption");
+
+        byte[] plain = new byte[count];
+        Buffer.BlockCopy(buffer, offset, plain, 0, count);
+        byte[] encrypted = CryptoUtil.EncryptAes(_aes.Key, plain);
+        return _innerStream.BeginWrite(encrypted, 0, encrypted.Length, callback, state);
+    }
+
+    public override void EndWrite(IAsyncResult asyncResult)
+    {
+        _innerStream.EndWrite(asyncResult);
+    }
+
+    public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        if (_aes == null || _decryptor == null)
+            throw new InvalidOperationException("Stream not initialized for decryption");
+
+        var record = await TlsRecordUtil.ReceiveRecordAsync(_innerStream, cancellationToken);
+        byte[] plain = CryptoUtil.DecryptAes(_aes.Key, record.Data);
+        int toCopy = Math.Min(plain.Length, count);
+        Buffer.BlockCopy(plain, 0, buffer, offset, toCopy);
+        return toCopy;
+    }
+
+    public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        if (_aes == null || _encryptor == null)
+            throw new InvalidOperationException("Stream not initialized for encryption");
+
+        byte[] plain = new byte[count];
+        Buffer.BlockCopy(buffer, offset, plain, 0, count);
+        byte[] encrypted = CryptoUtil.EncryptAes(_aes.Key, plain);
+        await TlsRecordUtil.SendRecordAsync(_innerStream, TlsRecordType.ApplicationData, encrypted, cancellationToken);
+    }
+
+
     public override void Close()
     {
         if (!_leaveInnerStreamOpen)
@@ -152,7 +215,6 @@ public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, R
         base.Close();
     }
 
-    // 其他Stream成员保持不变
     public override bool CanRead => true;
     public override bool CanSeek => false;
     public override bool CanWrite => true;
