@@ -4,6 +4,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading.Tasks;
 
 class AsyncClient
 {
@@ -34,10 +35,10 @@ class AsyncClient
 
             string message = "Hello from client!";
             byte[] messageData = Encoding.UTF8.GetBytes(message);
-            await sslStream.WriteAsync(messageData);
+            await sslStream.WriteAsync(messageData, 0, messageData.Length);
 
             byte[] buffer = new byte[1024];
-            int bytesRead = await sslStream.ReadAsync(buffer);
+            int bytesRead = await sslStream.ReadAsync(buffer, 0, buffer.Length);
             string response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
             Console.WriteLine("Client: Received - " + response);
         }

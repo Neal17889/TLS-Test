@@ -5,6 +5,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading.Tasks;
 
 class AsyncServer
 {
@@ -38,13 +39,13 @@ class AsyncServer
             Console.WriteLine("Server: TLS handshake completed");
 
             byte[] buffer = new byte[1024];
-            int bytesRead = await sslStream.ReadAsync(buffer);
+            int bytesRead = await sslStream.ReadAsync(buffer, 0, buffer.Length);
             string msg = Encoding.UTF8.GetString(buffer, 0, bytesRead);
             Console.WriteLine("Server: Received - " + msg);
 
             string response = "Hello from server!";
             byte[] responseData = Encoding.UTF8.GetBytes(response);
-            await sslStream.WriteAsync(responseData);
+            await sslStream.WriteAsync(responseData, 0, responseData.Length);
         }
         catch (Exception ex)
         {

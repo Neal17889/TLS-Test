@@ -4,34 +4,38 @@ using System.Text;
 
 public static class CryptoUtil
 {
-    public static byte[] EncryptAes(byte[] key, byte[] plainBytes)
+    // AEAD：加密（GCM模式）
+    public static byte[] EncryptAesGcm(byte[] key, byte[] nonce, byte[] plaintext, byte[]? aad = null)
     {
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.GenerateIV();
+        byte[] ciphertext = new byte[plaintext.Length];
+        byte[] tag = new byte[16]; // 128-bit tag
 
-        using var encryptor = aes.CreateEncryptor();
-        byte[] cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
+        using var aesGcm = new AesGcm(key);
+        aesGcm.Encrypt(nonce, plaintext, ciphertext, tag, aad);
 
-        byte[] result = new byte[aes.IV.Length + cipherBytes.Length];
-        Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
-        Buffer.BlockCopy(cipherBytes, 0, result, aes.IV.Length, cipherBytes.Length);
+        // 拼接 ciphertext + tag
+        byte[] result = new byte[ciphertext.Length + tag.Length];
+        Buffer.BlockCopy(ciphertext, 0, result, 0, ciphertext.Length);
+        Buffer.BlockCopy(tag, 0, result, ciphertext.Length, tag.Length);
         return result;
     }
 
-    public static byte[] DecryptAes(byte[] key, byte[] encryptedData)
+    // AEAD：解密（GCM模式）
+    public static byte[] DecryptAesGcm(byte[] key, byte[] nonce, byte[] encryptedData, byte[]? aad = null)
     {
-        using var aes = Aes.Create();
-        aes.Key = key;
+        int tagLength = 16;
+        if (encryptedData.Length < tagLength)
+            throw new CryptographicException("Encrypted data too short");
 
-        byte[] iv = new byte[aes.BlockSize / 8];
-        byte[] cipherBytes = new byte[encryptedData.Length - iv.Length];
-        Buffer.BlockCopy(encryptedData, 0, iv, 0, iv.Length);
-        Buffer.BlockCopy(encryptedData, iv.Length, cipherBytes, 0, cipherBytes.Length);
+        int cipherLength = encryptedData.Length - tagLength;
+        byte[] ciphertext = new byte[cipherLength];
+        byte[] tag = new byte[tagLength];
+        Buffer.BlockCopy(encryptedData, 0, ciphertext, 0, cipherLength);
+        Buffer.BlockCopy(encryptedData, cipherLength, tag, 0, tagLength);
 
-        aes.IV = iv;
-        using var decryptor = aes.CreateDecryptor();
-        byte[] plainBytes = decryptor.TransformFinalBlock(cipherBytes, 0, cipherBytes.Length);
-        return /*Encoding.UTF8.GetString(*/plainBytes/*)*/;
+        byte[] plaintext = new byte[cipherLength];
+        using var aesGcm = new AesGcm(key);
+        aesGcm.Decrypt(nonce, ciphertext, tag, plaintext, aad);
+        return plaintext;
     }
 }
