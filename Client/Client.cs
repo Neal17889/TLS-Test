@@ -1,5 +1,4 @@
-﻿// ========================= Client.cs =========================
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -13,17 +12,20 @@ class Client
 
         using TcpClient client = new("127.0.0.1", 4433);
         using NetworkStream stream = client.GetStream();
+        using EcdheUtil ecdhe = new();
 
         // 1. 发送 ClientHello
-        byte[] clientHello = HandshakeMessageUtil.BuildClientHello();
+        byte[] clientRandom = RandomNumberGenerator.GetBytes(32);
+        byte[] clientHello = HandshakeMessageUtil.BuildClientHello(clientRandom, ecdhe.PublicKeyBytes);
         handshakeMessages.Add(clientHello);
         TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, clientHello);
 
         // 2. 接收 ServerHello
         var (_, serverHello) = TlsRecordUtil.ReceiveRecord(stream);
+        HandshakeMessageUtil.ParseServerHello(serverHello, out var serverRandom, out var serverPubKey);
         handshakeMessages.Add(serverHello);
 
-        // 3. 接收服务器证书并验证
+        // 3. 接收服务器证书
         var (_, serverCertRaw) = TlsRecordUtil.ReceiveRecord(stream);
         handshakeMessages.Add(serverCertRaw);
         var serverCert = new X509Certificate2(serverCertRaw);
@@ -39,12 +41,9 @@ class Client
         handshakeMessages.Add(clientCert.RawData);
         TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, clientCert.RawData);
 
-        // 5. 使用双方random派生对称密钥
-        byte[] clientRandom = HandshakeMessageUtil.ExtractRandom(clientHello);
-        byte[] serverRandom = HandshakeMessageUtil.ExtractRandom(serverHello);
-        byte[] combinedRandoms = HandshakeMessageUtil.CombineRandoms(clientRandom, serverRandom);
-        byte[] aesKey = SHA256.HashData(combinedRandoms).Take(16).ToArray();
-
+        // 5. 派生共享密钥
+        byte[] sharedSecret = ecdhe.DeriveSharedSecret(serverPubKey);
+        byte[] aesKey = KeyDerivationUtil.DeriveAesKey(sharedSecret, clientRandom, serverRandom, PSKUtil.GetPskBytes());
 
         // 6. 发送 Finished
         byte[] handshakeHash = FinishedMessageUtil.ComputeHandshakeHash(handshakeMessages);

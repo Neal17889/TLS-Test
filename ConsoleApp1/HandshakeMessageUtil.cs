@@ -5,46 +5,47 @@ using System.Text;
 struct ClientHello
 {
     byte[] random[32];             // 模拟客户端随机
+    byte[] clientPublicKey;
 }
 
 struct ServerHello
 {
     byte[] random[32];             // 模拟服务端随机
+    byte[] serverPublicKey
 }*/
 
 public static class HandshakeMessageUtil
 {
-    public static byte[] BuildClientHello()
+    public static byte[] BuildClientHello(byte[] clientRandom, byte[] clientPublicKey)
     {
-        byte[] random = RandomNumberGenerator.GetBytes(32);
-        return random; // 直接发送随机数
+        byte[] hello = new byte[32 + clientPublicKey.Length];
+        Buffer.BlockCopy(clientRandom, 0, hello, 0, 32);
+        Buffer.BlockCopy(clientPublicKey, 0, hello, 32, clientPublicKey.Length);
+        return hello;
     }
 
-    public static byte[] BuildServerHello()
+    public static byte[] BuildServerHello(byte[] serverRandom, byte[] serverPublicKey)
     {
-        byte[] random = RandomNumberGenerator.GetBytes(32);
-        return random; // 直接发送随机数
+        byte[] hello = new byte[32 + serverPublicKey.Length];
+        Buffer.BlockCopy(serverRandom, 0, hello, 0, 32);
+        Buffer.BlockCopy(serverPublicKey, 0, hello, 32, serverPublicKey.Length);
+        return hello;
     }
 
-    public static byte[] ExtractRandom(byte[] hello)
+    public static void ParseClientHello(byte[] hello, out byte[] clientRandom, out byte[] clientPublicKey)
     {
-        // 提取 hello 消息中的前32字节随机数
-        if (hello.Length < 32)
-            throw new ArgumentException("Handshake message too short to extract random");
-
-        byte[] random = new byte[32];
-        Buffer.BlockCopy(hello, 0, random, 0, 32);
-        return random;
+        clientRandom = new byte[32];
+        Buffer.BlockCopy(hello, 0, clientRandom, 0, 32);
+        clientPublicKey = new byte[hello.Length - 32];
+        Buffer.BlockCopy(hello, 32, clientPublicKey, 0, clientPublicKey.Length);
     }
 
-    public static byte[] CombineRandoms(byte[] clientRandom, byte[] serverRandom)
+    public static void ParseServerHello(byte[] hello, out byte[] serverRandom, out byte[] serverPublicKey)
     {
-        if (clientRandom.Length != 32 || serverRandom.Length != 32)
-            throw new ArgumentException("Randoms must be 32 bytes each");
-
-        byte[] combined = new byte[64];
-        Buffer.BlockCopy(clientRandom, 0, combined, 0, 32);
-        Buffer.BlockCopy(serverRandom, 0, combined, 32, 32);
-        return combined;
+        serverRandom = new byte[32];
+        Buffer.BlockCopy(hello, 0, serverRandom, 0, 32);
+        serverPublicKey = new byte[hello.Length - 32];
+        Buffer.BlockCopy(hello, 32, serverPublicKey, 0, serverPublicKey.Length);
     }
 }
+

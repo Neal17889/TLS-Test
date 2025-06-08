@@ -1,5 +1,4 @@
-﻿// ========================= Server.cs =========================
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -18,14 +17,17 @@ class Server
 
         using TcpClient client = listener.AcceptTcpClient();
         using NetworkStream stream = client.GetStream();
+        using EcdheUtil ecdhe = new();
 
         // 1. 接收 ClientHello
         var (_, clientHello) = TlsRecordUtil.ReceiveRecord(stream);
+        HandshakeMessageUtil.ParseClientHello(clientHello, out var clientRandom, out var clientPubKey);
         handshakeMessages.Add(clientHello);
         Console.WriteLine("Server: Received ClientHello");
 
         // 2. 发送 ServerHello
-        byte[] serverHello = HandshakeMessageUtil.BuildServerHello();
+        byte[] serverRandom = RandomNumberGenerator.GetBytes(32);
+        byte[] serverHello = HandshakeMessageUtil.BuildServerHello(serverRandom, ecdhe.PublicKeyBytes);
         handshakeMessages.Add(serverHello);
         TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, serverHello);
         Console.WriteLine("Server: Sent ServerHello");
@@ -35,7 +37,7 @@ class Server
         handshakeMessages.Add(serverCert.RawData);
         TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, serverCert.RawData);
 
-        // 4. 接收客户端证书并验证
+        // 4. 接收客户端证书
         var (_, clientCertRaw) = TlsRecordUtil.ReceiveRecord(stream);
         handshakeMessages.Add(clientCertRaw);
         var clientCert = new X509Certificate2(clientCertRaw);
@@ -46,11 +48,9 @@ class Server
             return;
         }
 
-        // 5. 使用双方random派生对称密钥
-        byte[] clientRandom = HandshakeMessageUtil.ExtractRandom(clientHello);
-        byte[] serverRandom = HandshakeMessageUtil.ExtractRandom(serverHello);
-        byte[] combinedRandoms = HandshakeMessageUtil.CombineRandoms(clientRandom, serverRandom);
-        byte[] aesKey = SHA256.HashData(combinedRandoms).Take(16).ToArray();
+        // 5. 派生共享密钥
+        byte[] sharedSecret = ecdhe.DeriveSharedSecret(clientPubKey);
+        byte[] aesKey = KeyDerivationUtil.DeriveAesKey(sharedSecret, clientRandom, serverRandom, PSKUtil.GetPskBytes());
 
         // 6. 接收 Finished
         var (_, clientFinished) = TlsRecordUtil.ReceiveRecord(stream);
