@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿// KeyUtil.cs
+using System.Security.Cryptography;
 using System.Text;
 
 public static class KeyUtil

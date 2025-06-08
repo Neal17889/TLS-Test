@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿// FinishedMessageUtil.cs
+using System.Collections.Generic;
 using System.Security.Cryptography;
 
 public static class FinishedMessageUtil

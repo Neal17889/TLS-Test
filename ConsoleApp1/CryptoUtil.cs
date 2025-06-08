@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿// CryptoUtil.cs
+using System.Security.Cryptography;
 using System.Text;
 
 public static class CryptoUtil

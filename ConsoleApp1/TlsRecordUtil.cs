@@ -1,4 +1,5 @@
-﻿using System.Net.Sockets;
+﻿// TlsRecordUtil.cs
+using System.Net.Sockets;
 /*
 struct TlsRecord
 {

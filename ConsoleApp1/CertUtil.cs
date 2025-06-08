@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography.X509Certificates;
+﻿// CertUtil.cs
+using System.Security.Cryptography.X509Certificates;
 
 public static class CertUtil
 {
