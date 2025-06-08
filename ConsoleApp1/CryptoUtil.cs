@@ -3,14 +3,13 @@ using System.Text;
 
 public static class CryptoUtil
 {
-    public static byte[] EncryptAes(byte[] key, string plainText)
+    public static byte[] EncryptAes(byte[] key, byte[] plainBytes)
     {
         using var aes = Aes.Create();
         aes.Key = key;
         aes.GenerateIV();
 
         using var encryptor = aes.CreateEncryptor();
-        byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
         byte[] cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
 
         byte[] result = new byte[aes.IV.Length + cipherBytes.Length];
@@ -19,7 +18,7 @@ public static class CryptoUtil
         return result;
     }
 
-    public static string DecryptAes(byte[] key, byte[] encryptedData)
+    public static byte[] DecryptAes(byte[] key, byte[] encryptedData)
     {
         using var aes = Aes.Create();
         aes.Key = key;
@@ -32,6 +31,6 @@ public static class CryptoUtil
         aes.IV = iv;
         using var decryptor = aes.CreateDecryptor();
         byte[] plainBytes = decryptor.TransformFinalBlock(cipherBytes, 0, cipherBytes.Length);
-        return Encoding.UTF8.GetString(plainBytes);
+        return /*Encoding.UTF8.GetString(*/plainBytes/*)*/;
     }
 }

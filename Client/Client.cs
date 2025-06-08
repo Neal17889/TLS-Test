@@ -1,72 +1,55 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Net.Security;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
 class Client
 {
     public static void Main()
     {
-        List<byte[]> handshakeMessages = [];
-
-        using TcpClient client = new("127.0.0.1", 4433);
-        using NetworkStream stream = client.GetStream();
-        using EcdheUtil ecdhe = new();
-
-        // 1. 发送 ClientHello
-        byte[] clientRandom = RandomNumberGenerator.GetBytes(32);
-        byte[] clientHello = HandshakeMessageUtil.BuildClientHello(clientRandom, ecdhe.PublicKeyBytes);
-        handshakeMessages.Add(clientHello);
-        TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, clientHello);
-
-        // 2. 接收 ServerHello
-        var (_, serverHello) = TlsRecordUtil.ReceiveRecord(stream);
-        HandshakeMessageUtil.ParseServerHello(serverHello, out var serverRandom, out var serverPubKey);
-        handshakeMessages.Add(serverHello);
-
-        // 3. 接收服务器证书
-        var (_, serverCertRaw) = TlsRecordUtil.ReceiveRecord(stream);
-        handshakeMessages.Add(serverCertRaw);
-        var serverCert = new X509Certificate2(serverCertRaw);
-        var caCert = CertUtil.LoadCaCertificate("ca.crt");
-        if (!CertUtil.VerifyCertificateChain(serverCert, caCert))
+        try
         {
-            Console.WriteLine("Client: Server cert invalid");
-            return;
+            // 加载证书
+            var clientCert = CertUtil.LoadCertificate("client.pfx");
+            var caCert = CertUtil.LoadCaCertificate("ca.crt");
+
+            // 建立TCP连接
+            using TcpClient client = new("127.0.0.1", 4433);
+            using NetworkStream netStream = client.GetStream();
+
+            // 创建自定义SSL流
+            var sslStream = new MySslStream(
+                netStream,
+                leaveInnerStreamOpen: false,
+                certValidationCallback: (_, cert, chain, errors) =>
+                {
+                    // 将X509Certificate转换为X509Certificate2以便验证
+                    if (cert == null) return false;
+                    var serverCert = new X509Certificate2(cert);
+                    return CertUtil.VerifyCertificateChain(serverCert, caCert) &&
+                       errors == SslPolicyErrors.None;
+                }
+            );
+
+            // 执行客户端认证
+            sslStream.AuthenticateAsClient(clientCert, caCert);
+            Console.WriteLine("Client: TLS handshake completed");
+
+            // 发送加密数据
+            string message = "Hello from client!";
+            byte[] messageData = System.Text.Encoding.UTF8.GetBytes(message);
+            sslStream.Write(messageData, 0, messageData.Length);
+
+            // 接收加密响应
+            byte[] buffer = new byte[1024];
+            int bytesRead = sslStream.Read(buffer, 0, buffer.Length);
+            string response = System.Text.Encoding.UTF8.GetString(buffer, 0, bytesRead);
+            Console.WriteLine("Client: Received - " + response);
         }
-
-        // 4. 发送客户端证书
-        var clientCert = CertUtil.LoadCertificate("client.pfx");
-        handshakeMessages.Add(clientCert.RawData);
-        TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, clientCert.RawData);
-
-        // 5. 派生共享密钥
-        byte[] sharedSecret = ecdhe.DeriveSharedSecret(serverPubKey);
-        byte[] aesKey = KeyDerivationUtil.DeriveAesKey(sharedSecret, clientRandom, serverRandom, PSKUtil.GetPskBytes());
-
-        // 6. 发送 Finished
-        byte[] handshakeHash = FinishedMessageUtil.ComputeHandshakeHash(handshakeMessages);
-        byte[] finishedSig = FinishedMessageUtil.SignFinished(handshakeHash, clientCert.GetRSAPrivateKey());
-        TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, finishedSig);
-
-        // 7. 接收并验证 Finished
-        var (_, serverFinished) = TlsRecordUtil.ReceiveRecord(stream);
-        if (!FinishedMessageUtil.VerifyFinished(handshakeHash, serverFinished, serverCert.GetRSAPublicKey()))
+        catch (Exception ex)
         {
-            Console.WriteLine("Client: Server Finished verify failed");
-            return;
+            Console.WriteLine("Client error: " + ex.Message);
         }
-        Console.WriteLine("Client: Server Finished verified");
-
-        // 8. 收发数据
-        string message = "Hello from client!";
-        byte[] encMsg = CryptoUtil.EncryptAes(aesKey, message);
-        TlsRecordUtil.SendRecord(stream, TlsRecordType.ApplicationData, encMsg);
-
-        var (_, encResp) = TlsRecordUtil.ReceiveRecord(stream);
-        string resp = CryptoUtil.DecryptAes(aesKey, encResp);
-        Console.WriteLine("Client: Received - " + resp);
 
         Console.WriteLine("按任意键退出");
         Console.ReadLine();
