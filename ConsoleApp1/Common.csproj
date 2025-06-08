@@ -12,4 +12,8 @@
     <Compile Remove="KeyUtil.cs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="NSec.Cryptography" Version="25.4.0" />
+  </ItemGroup>
+
 </Project>

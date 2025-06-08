@@ -1,31 +1,39 @@
 ﻿// EcdheUtil.cs
-using System.Security.Cryptography;
+using NSec.Cryptography;
 
 public class EcdheUtil : IDisposable
 {
-    private readonly ECDiffieHellman _ecdh;
-    // 使用 SubjectPublicKeyInfo 格式导出本地公钥
+    private static readonly KeyAgreementAlgorithm Algorithm = KeyAgreementAlgorithm.X25519;
+    private readonly Key _privateKey;
     public byte[] PublicKeyBytes { get; }
 
     public EcdheUtil()
     {
-        _ecdh = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
-        PublicKeyBytes = _ecdh.PublicKey.ExportSubjectPublicKeyInfo();
+        _privateKey = new Key(Algorithm);
+        PublicKeyBytes = _privateKey.PublicKey.Export(KeyBlobFormat.RawPublicKey) ??
+                         throw new InvalidOperationException("Failed to export public key");
     }
 
     public byte[] DeriveSharedSecret(byte[] peerPublicKeyBytes)
     {
-        int bytesRead;
-        // 创建临时的 ECDiffieHellman 实例，并导入对方的公钥信息
-        using (ECDiffieHellman peerEcdh = ECDiffieHellman.Create())
+        ArgumentNullException.ThrowIfNull(peerPublicKeyBytes);
+
+        var peerPublicKey = PublicKey.Import(Algorithm, peerPublicKeyBytes, KeyBlobFormat.RawPublicKey) ??
+                            throw new InvalidOperationException("Failed to import peer public key");
+
+        var creationParams = new SharedSecretCreationParameters
         {
-            peerEcdh.ImportSubjectPublicKeyInfo(peerPublicKeyBytes, out bytesRead);
-            return _ecdh.DeriveKeyMaterial(peerEcdh.PublicKey);
-        }
+            ExportPolicy = KeyExportPolicies.AllowPlaintextExport
+        };
+
+        using SharedSecret sharedSecret = Algorithm.Agree(_privateKey, peerPublicKey, in creationParams) ??
+                                        throw new InvalidOperationException("Failed to derive shared secret");
+        return sharedSecret.Export(SharedSecretBlobFormat.RawSharedSecret) ??
+               throw new InvalidOperationException("Failed to export shared secret");
     }
 
     public void Dispose()
     {
-        _ecdh?.Dispose();
+        _privateKey?.Dispose();
     }
 }
