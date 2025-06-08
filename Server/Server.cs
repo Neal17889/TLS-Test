@@ -1,4 +1,5 @@
-﻿using System;
+﻿// ========================= Server.cs =========================
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -11,73 +12,67 @@ class Server
     {
         List<byte[]> handshakeMessages = [];
 
-        TcpListener listener = new (IPAddress.Loopback, 4433);
+        TcpListener listener = new(IPAddress.Loopback, 4433);
         listener.Start();
         Console.WriteLine("Server: Listening on port 4433...");
 
         using TcpClient client = listener.AcceptTcpClient();
         using NetworkStream stream = client.GetStream();
 
-        // Receive ClientHello
-        var (type, clientHello) = TlsRecordUtil.ReceiveRecord(stream);
+        // 1. 接收 ClientHello
+        var (_, clientHello) = TlsRecordUtil.ReceiveRecord(stream);
         handshakeMessages.Add(clientHello);
         Console.WriteLine("Server: Received ClientHello");
 
-        // Send ServerHello
+        // 2. 发送 ServerHello
         byte[] serverHello = HandshakeMessageUtil.BuildServerHello();
         handshakeMessages.Add(serverHello);
         TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, serverHello);
         Console.WriteLine("Server: Sent ServerHello");
 
-        // Send server certificate
-        X509Certificate2 serverCert = CertUtil.LoadCertificate("server.pfx");
+        // 3. 发送服务器证书
+        var serverCert = CertUtil.LoadCertificate("server.pfx");
         handshakeMessages.Add(serverCert.RawData);
         TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, serverCert.RawData);
-        Console.WriteLine("Server: Sent server certificate");
 
-        // Receive client certificate
-        var (type2, clientRaw) = TlsRecordUtil.ReceiveRecord(stream);
-        handshakeMessages.Add(clientRaw);
-        var clientCert = new X509Certificate2(clientRaw);
+        // 4. 接收客户端证书并验证
+        var (_, clientCertRaw) = TlsRecordUtil.ReceiveRecord(stream);
+        handshakeMessages.Add(clientCertRaw);
+        var clientCert = new X509Certificate2(clientCertRaw);
         var caCert = CertUtil.LoadCaCertificate("ca.crt");
         if (!CertUtil.VerifyCertificateChain(clientCert, caCert))
         {
-            Console.WriteLine("Server: Client certificate verification failed!");
+            Console.WriteLine("Server: Client certificate invalid");
             return;
         }
-        Console.WriteLine("Server: Client certificate verified");
 
-        // Receive encrypted AES key
-        var (type3, encKeyRecord) = TlsRecordUtil.ReceiveRecord(stream);
-        RSA? serverRsa = serverCert.GetRSAPrivateKey();
-        byte[] aesKey = serverRsa.Decrypt(encKeyRecord, RSAEncryptionPadding.Pkcs1);
-        Console.WriteLine("Server: Received and decrypted AES key");
+        // 5. 使用双方random派生对称密钥
+        byte[] clientRandom = HandshakeMessageUtil.ExtractRandom(clientHello);
+        byte[] serverRandom = HandshakeMessageUtil.ExtractRandom(serverHello);
+        byte[] combinedRandoms = HandshakeMessageUtil.CombineRandoms(clientRandom, serverRandom);
+        byte[] aesKey = SHA256.HashData(combinedRandoms).Take(16).ToArray();
 
-        // Receive client Finished
-        var (type4, clientFinished) = TlsRecordUtil.ReceiveRecord(stream);
-        byte[] expectedHash = FinishedMessageUtil.ComputeHandshakeHash(handshakeMessages);
-        if (!FinishedMessageUtil.VerifyFinished(expectedHash, clientFinished, clientCert.GetRSAPublicKey()))
+        // 6. 接收 Finished
+        var (_, clientFinished) = TlsRecordUtil.ReceiveRecord(stream);
+        byte[] handshakeHash = FinishedMessageUtil.ComputeHandshakeHash(handshakeMessages);
+        if (!FinishedMessageUtil.VerifyFinished(handshakeHash, clientFinished, clientCert.GetRSAPublicKey()))
         {
-            Console.WriteLine("Server: Client Finished verification failed!");
+            Console.WriteLine("Server: Client Finished verification failed");
             return;
         }
         Console.WriteLine("Server: Client Finished verified");
 
-        // Send server Finished
-        byte[] serverHash = FinishedMessageUtil.ComputeHandshakeHash(handshakeMessages);
-        byte[] serverFinished = FinishedMessageUtil.SignFinished(serverHash, serverCert.GetRSAPrivateKey());
+        // 7. 发送 Finished
+        byte[] serverFinished = FinishedMessageUtil.SignFinished(handshakeHash, serverCert.GetRSAPrivateKey());
         TlsRecordUtil.SendRecord(stream, TlsRecordType.Handshake, serverFinished);
-        Console.WriteLine("Server: Sent Finished message");
 
-        // Receive encrypted message
-        var (type5, encAppData) = TlsRecordUtil.ReceiveRecord(stream);
-        string message = CryptoUtil.DecryptAes(aesKey, encAppData);
-        Console.WriteLine("Server: Decrypted message: " + message);
+        // 8. 收发数据
+        var (_, encAppData) = TlsRecordUtil.ReceiveRecord(stream);
+        string msg = CryptoUtil.DecryptAes(aesKey, encAppData);
+        Console.WriteLine("Server: Received - " + msg);
 
-        // Send encrypted response
         string response = "Hello from server!";
-        byte[] encResp = CryptoUtil.EncryptAes(aesKey, response);
+        var encResp = CryptoUtil.EncryptAes(aesKey, response);
         TlsRecordUtil.SendRecord(stream, TlsRecordType.ApplicationData, encResp);
-        Console.WriteLine("Server: Sent encrypted response");
     }
 }
