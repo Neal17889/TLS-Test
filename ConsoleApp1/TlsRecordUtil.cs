@@ -29,7 +29,7 @@ public static class TlsRecordUtil
 {
     private const ushort TlsVersion = 0x0303;
     private const int AeadTagSize = 16;
-    private const int NonceSize = 12;
+    private const int NonceSize = 8;
 
     // Send AEAD record
     public static async Task SendRecordWithAeadAsync(Stream stream, TlsRecordType type, byte[] plaintext, TlsCryptoContext ctx, CancellationToken cancellationToken)
@@ -79,19 +79,19 @@ public static class TlsRecordUtil
 
     public static byte[] ComputeNonce(byte[] ivBase, ulong sequenceNumber)
     {
-        if (ivBase.Length != NonceSize)
-            throw new ArgumentException("IV base must be 12 bytes for AES-GCM");
+        if (ivBase.Length < NonceSize)
+            throw new ArgumentException("IV base must be at least 8 bytes for ChaCha20");
 
-        byte[] nonce = new byte[NonceSize];
         byte[] seqBytes = BitConverter.GetBytes(sequenceNumber);
         if (BitConverter.IsLittleEndian)
-            Array.Reverse(seqBytes);
+            Array.Reverse(seqBytes); // network order
 
+        byte[] nonce = new byte[NonceSize];
         for (int i = 0; i < NonceSize; i++)
         {
-            byte seqByte = (i < 8) ? seqBytes[seqBytes.Length - 8 + i] : (byte)0;
-            nonce[i] = (byte)(ivBase[i] ^ seqByte);
+            nonce[i] = (byte)(ivBase[i] ^ seqBytes[seqBytes.Length - NonceSize + i]);
         }
         return nonce;
     }
+
 }

@@ -25,14 +25,15 @@ public static class KeyDerivationUtil
         }
 
         Span<byte> info = Encoding.UTF8.GetBytes("TLS_AES_128_KEY_DERIVATION");
-        Span<byte> okm = stackalloc byte[44]; // 原 32 => 增加为 44
+        Span<byte> okm = stackalloc byte[40];
         using (var hmac = new HMACSHA256(prk.ToArray()))
         {
             hmac.TryComputeHash(info, okm, out _);
         }
 
         byte[] aesKey = okm.Slice(0, 32).ToArray();   // 取前 32 字节
-        byte[] ivBase = okm.Slice(32, 12).ToArray();  // 取后 12 字节
+        byte[] ivBase = okm.Slice(32, 8).ToArray(); // only 8 bytes needed
+
 
         return new AeadKeyMaterial(aesKey, ivBase);
     }
