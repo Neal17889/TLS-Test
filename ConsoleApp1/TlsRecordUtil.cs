@@ -37,7 +37,7 @@ public static class TlsRecordUtil
         byte[] nonce = ComputeNonce(ctx.IvBase, ctx.SendSequence);
         byte[] header = BuildTlsHeader(type, plaintext.Length + AeadTagSize);
 
-        byte[] encrypted = CryptoUtil.EncryptAesGcm(ctx.Key, nonce, plaintext, header);
+        byte[] encrypted = CryptoUtil.EncryptChaCha20Poly1305(ctx.Key, nonce, plaintext, header);
 
         byte[] record = new byte[header.Length + encrypted.Length];
         Buffer.BlockCopy(header, 0, record, 0, header.Length);
@@ -60,7 +60,7 @@ public static class TlsRecordUtil
         await stream.ReadExactlyAsync(encrypted, cancellationToken);
 
         byte[] nonce = ComputeNonce(ctx.IvBase, ctx.ReceiveSequence);
-        byte[] plaintext = CryptoUtil.DecryptAesGcm(ctx.Key, nonce, encrypted, header);
+        byte[] plaintext = CryptoUtil.DecryptChaCha20Poly1305(ctx.Key, nonce, encrypted, header);
         ctx.ReceiveSequence++;
         return (type, plaintext);
     }

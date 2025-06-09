@@ -4,24 +4,29 @@ using System.Security.Cryptography;
 
 public static class FinishedMessageUtil
 {
+    // 计算所有握手消息的 Hash，作为验证握手完整性的基础数据
     public static byte[] ComputeHandshakeHash(List<byte[]> messages)
     {
         using var sha256 = SHA256.Create();
         foreach (var msg in messages)
+        {
             sha256.TransformBlock(msg, 0, msg.Length, null, 0);
+        }
         sha256.TransformFinalBlock(System.Array.Empty<byte>(), 0, 0);
-        return sha256.Hash!;
+        return sha256.Hash;
     }
 
-    public static byte[] SignFinished(byte[] hash, ECDsa privateKey)
+    // 使用 finishedKey 计算 HMAC-SHA256 作为 Finished 消息的 MAC
+    public static byte[] ComputeFinishedMAC(byte[] handshakeHash, byte[] finishedKey)
     {
-        // 使用 ECDsa 对传入的 hash 进行签名（默认使用 SHA256 算法）
-        return privateKey.SignHash(hash);
+        using var hmac = new HMACSHA256(finishedKey);
+        return hmac.ComputeHash(handshakeHash);
     }
 
-    public static bool VerifyFinished(byte[] hash, byte[] signature, ECDsa publicKey)
+    // 验证接收到的 Finished 消息 MAC 是否正确（采用恒定时间比较）
+    public static bool VerifyFinishedMAC(byte[] handshakeHash, byte[] finishedKey, byte[] receivedMAC)
     {
-        // 使用 ECDsa 对 signature 进行验证
-        return publicKey.VerifyHash(hash, signature);
+        byte[] computedMAC = ComputeFinishedMAC(handshakeHash, finishedKey);
+        return CryptographicOperations.FixedTimeEquals(computedMAC, receivedMAC);
     }
 }

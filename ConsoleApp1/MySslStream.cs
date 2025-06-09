@@ -10,17 +10,24 @@ using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 
-public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, RemoteCertificateValidationCallback certValidationCallback) : Stream
+public class MySslStream : Stream
 {
-    private readonly NetworkStream _innerStream = innerStream ?? throw new ArgumentNullException(nameof(innerStream));
-    private readonly bool _leaveInnerStreamOpen = leaveInnerStreamOpen;
-    private readonly RemoteCertificateValidationCallback _certValidationCallback = certValidationCallback ?? throw new ArgumentNullException(nameof(certValidationCallback));
+    private readonly NetworkStream _innerStream = null!;
+    private readonly bool _leaveInnerStreamOpen;
+    private readonly RemoteCertificateValidationCallback _certValidationCallback;
 
     private TlsCryptoContext? _cryptoContext;
-    private readonly List<byte[]> _handshakeMessages = [];
+    private readonly List<byte[]> _handshakeMessages = new();
 
     public X509Certificate? LocalCertificate { get; private set; }
     public X509Certificate? RemoteCertificate { get; private set; }
+
+    public MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, RemoteCertificateValidationCallback certValidationCallback)
+    {
+        _innerStream = innerStream ?? throw new ArgumentNullException(nameof(innerStream));
+        _leaveInnerStreamOpen = leaveInnerStreamOpen;
+        _certValidationCallback = certValidationCallback ?? throw new ArgumentNullException(nameof(certValidationCallback));
+    }
 
     private void SendHandshakeRecord(byte[] payload)
     {
@@ -68,19 +75,20 @@ public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, R
         SendHandshakeRecord(clientCert.RawData);
         LocalCertificate = clientCert;
 
+        // 共享密钥及密钥派生（包含 finished_key） 
         byte[] psk = PSKUtil.GetPskBytes();
         byte[] sharedSecret = ecdhe.DeriveSharedSecret(serverPubKey);
         var keys = KeyDerivationUtil.DeriveAeadKey(sharedSecret, clientRandom, serverRandom, psk);
         _cryptoContext = new TlsCryptoContext { Key = keys.AesKey, IvBase = keys.IvBase };
 
+        // 使用 finished_key 和 HMAC 计算 Finished 消息
         byte[] handshakeHash = FinishedMessageUtil.ComputeHandshakeHash(_handshakeMessages);
-        var privateKey = clientCert.GetECDsaPrivateKey() ?? throw new InvalidOperationException("Client certificate has no private key");
-        byte[] finished = FinishedMessageUtil.SignFinished(handshakeHash, privateKey);
+        byte[] finished = FinishedMessageUtil.ComputeFinishedMAC(handshakeHash, keys.FinishedKey);
         SendHandshakeRecord(finished);
 
+        // 客户端接收并验证服务端的 Finished 消息
         byte[] serverFinished = ReceiveHandshakeRecord();
-        var publicKey = serverCert.GetECDsaPublicKey() ?? throw new InvalidOperationException("Server certificate has no public key");
-        if (!FinishedMessageUtil.VerifyFinished(handshakeHash, serverFinished, publicKey))
+        if (!FinishedMessageUtil.VerifyFinishedMAC(handshakeHash, keys.FinishedKey, serverFinished))
             throw new Exception("Server Finished verification failed");
     }
 
@@ -111,19 +119,20 @@ public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, R
         if (!_certValidationCallback(this, clientCert, null, SslPolicyErrors.None))
             throw new Exception("Client certificate validation failed");
 
+        // 共享密钥及密钥派生（包含 finished_key）
         byte[] psk = PSKUtil.GetPskBytes();
         byte[] sharedSecret = ecdhe.DeriveSharedSecret(clientPubKey);
         var keys = KeyDerivationUtil.DeriveAeadKey(sharedSecret, clientRandom, serverRandom, psk);
         _cryptoContext = new TlsCryptoContext { Key = keys.AesKey, IvBase = keys.IvBase };
 
+        // 客户端发送 Finished 消息，服务端接收并验证
         byte[] clientFinished = ReceiveHandshakeRecord();
         byte[] handshakeHash = FinishedMessageUtil.ComputeHandshakeHash(_handshakeMessages);
-        var publicKey = clientCert.GetECDsaPublicKey() ?? throw new InvalidOperationException("Client certificate has no public key");
-        if (!FinishedMessageUtil.VerifyFinished(handshakeHash, clientFinished, publicKey))
+        if (!FinishedMessageUtil.VerifyFinishedMAC(handshakeHash, keys.FinishedKey, clientFinished))
             throw new Exception("Client Finished verification failed");
 
-        var privateKey = serverCert.GetECDsaPrivateKey() ?? throw new InvalidOperationException("Server certificate has no private key");
-        byte[] serverFinished = FinishedMessageUtil.SignFinished(handshakeHash, privateKey);
+        // 服务端生成 Finished 消息并发送
+        byte[] serverFinished = FinishedMessageUtil.ComputeFinishedMAC(handshakeHash, keys.FinishedKey);
         SendHandshakeRecord(serverFinished);
     }
 
