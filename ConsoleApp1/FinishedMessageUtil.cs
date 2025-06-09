@@ -13,13 +13,15 @@ public static class FinishedMessageUtil
         return sha256.Hash!;
     }
 
-    public static byte[] SignFinished(byte[] hash, RSA privateKey)
+    public static byte[] SignFinished(byte[] hash, ECDsa privateKey)
     {
-        return privateKey.SignHash(hash, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        // 使用 ECDsa 对传入的 hash 进行签名（默认使用 SHA256 算法）
+        return privateKey.SignHash(hash);
     }
 
-    public static bool VerifyFinished(byte[] hash, byte[] signature, RSA publicKey)
+    public static bool VerifyFinished(byte[] hash, byte[] signature, ECDsa publicKey)
     {
-        return publicKey.VerifyHash(hash, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        // 使用 ECDsa 对 signature 进行验证
+        return publicKey.VerifyHash(hash, signature);
     }
 }

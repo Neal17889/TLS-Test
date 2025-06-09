@@ -74,12 +74,12 @@ public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, R
         _cryptoContext = new TlsCryptoContext { Key = keys.AesKey, IvBase = keys.IvBase };
 
         byte[] handshakeHash = FinishedMessageUtil.ComputeHandshakeHash(_handshakeMessages);
-        var privateKey = clientCert.GetRSAPrivateKey() ?? throw new InvalidOperationException("Client certificate has no private key");
+        var privateKey = clientCert.GetECDsaPrivateKey() ?? throw new InvalidOperationException("Client certificate has no private key");
         byte[] finished = FinishedMessageUtil.SignFinished(handshakeHash, privateKey);
         SendHandshakeRecord(finished);
 
         byte[] serverFinished = ReceiveHandshakeRecord();
-        var publicKey = serverCert.GetRSAPublicKey() ?? throw new InvalidOperationException("Server certificate has no public key");
+        var publicKey = serverCert.GetECDsaPublicKey() ?? throw new InvalidOperationException("Server certificate has no public key");
         if (!FinishedMessageUtil.VerifyFinished(handshakeHash, serverFinished, publicKey))
             throw new Exception("Server Finished verification failed");
     }
@@ -118,11 +118,11 @@ public class MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, R
 
         byte[] clientFinished = ReceiveHandshakeRecord();
         byte[] handshakeHash = FinishedMessageUtil.ComputeHandshakeHash(_handshakeMessages);
-        var publicKey = clientCert.GetRSAPublicKey() ?? throw new InvalidOperationException("Client certificate has no public key");
+        var publicKey = clientCert.GetECDsaPublicKey() ?? throw new InvalidOperationException("Client certificate has no public key");
         if (!FinishedMessageUtil.VerifyFinished(handshakeHash, clientFinished, publicKey))
             throw new Exception("Client Finished verification failed");
 
-        var privateKey = serverCert.GetRSAPrivateKey() ?? throw new InvalidOperationException("Server certificate has no private key");
+        var privateKey = serverCert.GetECDsaPrivateKey() ?? throw new InvalidOperationException("Server certificate has no private key");
         byte[] serverFinished = FinishedMessageUtil.SignFinished(handshakeHash, privateKey);
         SendHandshakeRecord(serverFinished);
     }
