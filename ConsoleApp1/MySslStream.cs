@@ -12,9 +12,10 @@ using System.Threading.Tasks;
 
 public class MySslStream : Stream
 {
-    private readonly NetworkStream _innerStream = null!;
+    private readonly NetworkStream _innerStream;
     private readonly bool _leaveInnerStreamOpen;
     private readonly RemoteCertificateValidationCallback _certValidationCallback;
+    private readonly bool _useCertAuth; // 用于控制是否进行证书认证
 
     private TlsCryptoContext? _cryptoContext;
     private readonly List<byte[]> _handshakeMessages = new();
@@ -22,11 +23,13 @@ public class MySslStream : Stream
     public X509Certificate? LocalCertificate { get; private set; }
     public X509Certificate? RemoteCertificate { get; private set; }
 
-    public MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, RemoteCertificateValidationCallback certValidationCallback)
+    // 构造函数中增加 useCertAuth 参数
+    public MySslStream(NetworkStream innerStream, bool leaveInnerStreamOpen, RemoteCertificateValidationCallback certValidationCallback, bool useCertAuth)
     {
         _innerStream = innerStream ?? throw new ArgumentNullException(nameof(innerStream));
         _leaveInnerStreamOpen = leaveInnerStreamOpen;
         _certValidationCallback = certValidationCallback ?? throw new ArgumentNullException(nameof(certValidationCallback));
+        _useCertAuth = useCertAuth;
     }
 
     private void SendHandshakeRecord(byte[] payload)
@@ -49,10 +52,16 @@ public class MySslStream : Stream
         return payload;
     }
 
+    // 客户端认证方法
+    // 若 _useCertAuth 为 true，则要求双向证书认证，否则跳过证书交换流程
     public void AuthenticateAsClient(X509Certificate2 clientCert, X509Certificate2 caCert)
     {
-        ArgumentNullException.ThrowIfNull(clientCert);
-        ArgumentNullException.ThrowIfNull(caCert);
+        // 当使用证书认证时，参数不能为 null
+        if (_useCertAuth)
+        {
+            ArgumentNullException.ThrowIfNull(clientCert);
+            ArgumentNullException.ThrowIfNull(caCert);
+        }
 
         using var ecdhe = new EcdheUtil();
         byte[] clientRandom = RandomNumberGenerator.GetBytes(32);
@@ -64,18 +73,29 @@ public class MySslStream : Stream
         _handshakeMessages.Add(serverHello);
         HandshakeMessageUtil.ParseServerHello(serverHello, out byte[] serverRandom, out byte[] serverPubKey);
 
-        byte[] serverCertRaw = ReceiveHandshakeRecord();
-        _handshakeMessages.Add(serverCertRaw);
-        var serverCert = new X509Certificate2(serverCertRaw);
-        RemoteCertificate = serverCert;
-        if (!_certValidationCallback(this, serverCert, null, SslPolicyErrors.None))
-            throw new Exception("Server certificate validation failed");
+        if (_useCertAuth)
+        {
+            // 接收并处理服务器证书
+            byte[] serverCertRaw = ReceiveHandshakeRecord();
+            _handshakeMessages.Add(serverCertRaw);
+            var serverCert = new X509Certificate2(serverCertRaw);
+            RemoteCertificate = serverCert;
+            if (!_certValidationCallback(this, serverCert, null, SslPolicyErrors.None))
+                throw new Exception("Server certificate validation failed");
 
-        _handshakeMessages.Add(clientCert.RawData);
-        SendHandshakeRecord(clientCert.RawData);
-        LocalCertificate = clientCert;
+            // 发送客户端证书
+            _handshakeMessages.Add(clientCert.RawData);
+            SendHandshakeRecord(clientCert.RawData);
+            LocalCertificate = clientCert;
+        }
+        else
+        {
+            // 若不采用证书认证，则不交换证书，确保相关成员为 null
+            LocalCertificate = null;
+            RemoteCertificate = null;
+        }
 
-        // 共享密钥及密钥派生（包含 finished_key） 
+        // 共享密钥及密钥派生（包含 finished_key）
         byte[] psk = PSKUtil.GetPskBytes();
         byte[] sharedSecret = ecdhe.DeriveSharedSecret(serverPubKey);
         var keys = KeyDerivationUtil.DeriveAeadKey(sharedSecret, clientRandom, serverRandom, psk);
@@ -92,10 +112,15 @@ public class MySslStream : Stream
             throw new Exception("Server Finished verification failed");
     }
 
+    // 服务器认证方法
+    // 若 _useCertAuth 为 true，则要求双向证书认证，否则跳过证书交换流程
     public void AuthenticateAsServer(X509Certificate2 serverCert, X509Certificate2 caCert)
     {
-        ArgumentNullException.ThrowIfNull(serverCert);
-        ArgumentNullException.ThrowIfNull(caCert);
+        if (_useCertAuth)
+        {
+            ArgumentNullException.ThrowIfNull(serverCert);
+            ArgumentNullException.ThrowIfNull(caCert);
+        }
 
         using var ecdhe = new EcdheUtil();
         byte[] serverRandom = RandomNumberGenerator.GetBytes(32);
@@ -108,16 +133,26 @@ public class MySslStream : Stream
         _handshakeMessages.Add(serverHello);
         SendHandshakeRecord(serverHello);
 
-        _handshakeMessages.Add(serverCert.RawData);
-        SendHandshakeRecord(serverCert.RawData);
-        LocalCertificate = serverCert;
+        if (_useCertAuth)
+        {
+            // 发送服务器证书
+            _handshakeMessages.Add(serverCert.RawData);
+            SendHandshakeRecord(serverCert.RawData);
+            LocalCertificate = serverCert;
 
-        byte[] clientCertRaw = ReceiveHandshakeRecord();
-        _handshakeMessages.Add(clientCertRaw);
-        var clientCert = new X509Certificate2(clientCertRaw);
-        RemoteCertificate = clientCert;
-        if (!_certValidationCallback(this, clientCert, null, SslPolicyErrors.None))
-            throw new Exception("Client certificate validation failed");
+            // 接收并处理客户端证书
+            byte[] clientCertRaw = ReceiveHandshakeRecord();
+            _handshakeMessages.Add(clientCertRaw);
+            var clientCert = new X509Certificate2(clientCertRaw);
+            RemoteCertificate = clientCert;
+            if (!_certValidationCallback(this, clientCert, null, SslPolicyErrors.None))
+                throw new Exception("Client certificate validation failed");
+        }
+        else
+        {
+            LocalCertificate = null;
+            RemoteCertificate = null;
+        }
 
         // 共享密钥及密钥派生（包含 finished_key）
         byte[] psk = PSKUtil.GetPskBytes();
@@ -125,13 +160,13 @@ public class MySslStream : Stream
         var keys = KeyDerivationUtil.DeriveAeadKey(sharedSecret, clientRandom, serverRandom, psk);
         _cryptoContext = new TlsCryptoContext { Key = keys.AesKey, IvBase = keys.IvBase };
 
-        // 客户端发送 Finished 消息，服务端接收并验证
+        // 接收并验证客户端 Finished 消息
         byte[] clientFinished = ReceiveHandshakeRecord();
         byte[] handshakeHash = FinishedMessageUtil.ComputeHandshakeHash(_handshakeMessages);
         if (!FinishedMessageUtil.VerifyFinishedMAC(handshakeHash, keys.FinishedKey, clientFinished))
             throw new Exception("Client Finished verification failed");
 
-        // 服务端生成 Finished 消息并发送
+        // 生成并发送服务器 Finished 消息
         byte[] serverFinished = FinishedMessageUtil.ComputeFinishedMAC(handshakeHash, keys.FinishedKey);
         SendHandshakeRecord(serverFinished);
     }
