@@ -2,6 +2,8 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Security;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,7 +17,7 @@ class AsyncServer
         listener.Start();
         Console.WriteLine($"Server: Listening on port {port}...");
 
-        // 预加载证书（若使用证书认证则会使用，否则仍加载以便传入参数）
+        // 预加载证书（服务器证书和 CA 证书）
         var serverCert = CertUtil.LoadCertificate("server.pfx");
         var caCert = CertUtil.LoadCaCertificate("ca.crt");
 
@@ -41,23 +43,17 @@ class AsyncServer
             using (client)
             using (var netStream = client.GetStream())
             {
-                // 构造 MySslStream，useCertAuth 设置为 false（不采用证书认证）
-                var sslStream = new MySslStream(
-                    netStream,
-                    leaveInnerStreamOpen: false,
-                    certValidationCallback: (_, cert, chain, errors) =>
-                    {
-                        if (cert == null)
-                            return false;
-                        var cert2 = new X509Certificate2(cert);
-                        return CertUtil.VerifyCertificateChain(cert2, caCert) &&
-                               errors == System.Net.Security.SslPolicyErrors.None;
-                    },
-                    useCertAuth: false
-                );
+                // 构造 SslStream，注意 leaveInnerStreamOpen 为 false
+                // 由于不采用客户端证书认证，这里回调直接返回 true；如果需要验证客户端证书，可在此处添加验证逻辑
+                var sslStream = new SslStream(netStream, false, new RemoteCertificateValidationCallback((sender, certificate, chain, sslPolicyErrors) =>
+                {
+                    // 若需要客户端证书认证，按需验证 certificate
+                    return true;
+                }));
 
-                // 执行 TLS 握手
-                sslStream.AuthenticateAsServer(serverCert, caCert);
+                // 使用 SslStream 执行 TLS 握手
+                // 参数说明：服务器证书、是否要求客户端证书（此处为 false）、使用 TLS 1.2、是否检查撤销状态（此处为 false）
+                await sslStream.AuthenticateAsServerAsync(serverCert, clientCertificateRequired: false, enabledSslProtocols: SslProtocols.Tls12, checkCertificateRevocation: false);
                 Console.WriteLine("Server: TLS handshake completed.");
 
                 byte[] buffer = new byte[1024];
@@ -66,18 +62,18 @@ class AsyncServer
                     int bytesRead = 0;
                     try
                     {
-                        // 尝试读取数据，如果流已结束或数据不足将抛出异常
+                        // 尝试从 SslStream 中读取数据
                         bytesRead = await sslStream.ReadAsync(buffer, 0, buffer.Length);
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine("Server: Exception during reading: " + ex.Message);
-                        break; // 读取异常时优雅退出循环
+                        break; // 发生异常时退出循环
                     }
 
                     if (bytesRead <= 0)
                     {
-                        // 当返回 0 时，意味着客户端已经关闭了连接
+                        // 如果返回 0，表示客户端已关闭连接
                         Console.WriteLine("Server: Client closed connection gracefully.");
                         break;
                     }

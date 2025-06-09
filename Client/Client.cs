@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Security;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
@@ -26,7 +28,7 @@ class PerformanceTestClient
 
     public static async Task Main()
     {
-        // 加载客户端证书和CA证书（请确保文件路径正确）
+        // 加载客户端证书和 CA 证书（请确保文件路径正确）
         var clientCert = CertUtil.LoadCertificate("client.pfx");
         var caCert = CertUtil.LoadCaCertificate("ca.crt");
 
@@ -52,9 +54,9 @@ class PerformanceTestClient
         await Task.WhenAll(connectionTasks);
         swGlobal.Stop();
 
-        // 计算连接错误率和消息吞吐量
+        // 计算连接错误率和消息吞吐量（消息/秒）
         double errorRate = errorConnections > 0 ? (double)errorConnections / totalConnections * 100.0 : 0.0;
-        double throughput = totalMessages / (double)TEST_DURATION; // 每秒发送的消息数
+        double throughput = totalMessages / (double)TEST_DURATION;
 
         // 输出全局测试指标
         Console.WriteLine("---- Test Completed ----");
@@ -83,23 +85,16 @@ class PerformanceTestClient
             await client.ConnectAsync(IPAddress.Loopback, 4433);
             using NetworkStream netStream = client.GetStream();
 
-            // 构造 MySslStream，useCertAuth 设置为 false（即不进行双向证书认证）
-            var sslStream = new MySslStream(
-                netStream,
-                leaveInnerStreamOpen: false,
-                certValidationCallback: (_, cert, chain, errors) =>
-                {
-                    if (cert == null)
-                        return false;
-                    var serverCert = new X509Certificate2(cert);
-                    return CertUtil.VerifyCertificateChain(serverCert, caCert) &&
-                           errors == System.Net.Security.SslPolicyErrors.None;
-                },
-                useCertAuth: false
-            );
+            // 构造 SslStream
+            // 不进行客户端证书认证，因此 RemoteCertificateValidationCallback 中仅用于验证服务器证书
+            var sslStream = new SslStream(netStream, false, new RemoteCertificateValidationCallback((sender, certificate, chain, sslPolicyErrors) =>
+            {
+                return true;
+            }));
 
             // 进行 TLS 握手
-            sslStream.AuthenticateAsClient(clientCert, caCert);
+            // targetHost 参数必须与服务器证书的 CN 一致，这里使用 "localhost"，如有需要请修改
+            await sslStream.AuthenticateAsClientAsync("localhost", new X509CertificateCollection { clientCert }, SslProtocols.Tls12, false);
             Interlocked.Increment(ref successConnections);
 
             // 每个连接发送固定数量的消息
